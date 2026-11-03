@@ -21,6 +21,11 @@ public final class AdminAbusePlugin extends JavaPlugin {
         }
     }
 
+    @Override
+    public void onDisable() {
+        BiteEffect.clear();
+    }
+
     public boolean debug() {
         return debug;
     }

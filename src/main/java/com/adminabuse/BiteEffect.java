@@ -1,169 +1,242 @@
 package com.adminabuse;
 
-import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Material;
-import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.World;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.entity.BlockDisplay;
+import org.bukkit.entity.Display;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitRunnable;
-import org.bukkit.util.Vector;
+import org.bukkit.util.Transformation;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 /**
- * The vampire bite, about one second long:
- * <ol>
- *   <li>0-5 ticks: a pair of jaws with bone-white teeth and two long fangs snaps shut on the victim's neck, from the side the attacker stands on.</li>
- *   <li>tick 5: the bite lands. Blood sprays out of two puncture marks, a dark red shockwave ring rolls out.</li>
- *   <li>5-19 ticks: blood spirals up around the victim while a stream of blood is drained into the attacker, who gets hearts at the end.</li>
- * </ol>
+ * The bite is a real 3D model, no particles: an upper and a lower jaw built from block display entities - a
+ * horseshoe of bone-white teeth with two long fangs on top and two canines below, set in red gums. The jaws
+ * lunge in from the attacker's side, snap shut around the victim's neck, clench and shake while blood drips from
+ * the fang tips, then open and shrink away.
  */
 public final class BiteEffect {
-    private static final Particle.DustOptions BONE = new Particle.DustOptions(Color.fromRGB(246, 240, 232), 0.75f);
-    private static final Particle.DustOptions GUM = new Particle.DustOptions(Color.fromRGB(110, 0, 12), 1.0f);
-    private static final Particle.DustOptions BLOOD = new Particle.DustOptions(Color.fromRGB(170, 0, 18), 1.15f);
-    private static final Particle.DustTransition RING =
-            new Particle.DustTransition(Color.fromRGB(200, 0, 28), Color.fromRGB(25, 0, 6), 1.4f);
-    private static final Particle.DustTransition STREAM =
-            new Particle.DustTransition(Color.fromRGB(230, 10, 35), Color.fromRGB(70, 0, 10), 1.0f);
+    private static final float R = 0.55f;                          // radius of the tooth horseshoe
+    private static final float OPEN = (float) Math.toRadians(38);  // how wide the mouth starts
+    private static final float SLIDE = 0.45f;                      // how far in front the jaws start
+    private static final Vector3f PIVOT = new Vector3f(0, 0, -0.30f); // the jaw hinge
+    private static final int SNAP = 4;   // tick the jaws are shut
+    private static final int END = 21;   // tick everything is removed
 
-    private static final int SNAP = 5;   // tick the jaws close
-    private static final int END = 20;   // last tick
+    private static final Set<Display> ACTIVE = new HashSet<>();
 
     private BiteEffect() {
     }
 
+    /** Removes any bite models still in the world (server shutdown / reload). */
+    public static void clear() {
+        for (Display d : new ArrayList<>(ACTIVE)) d.remove();
+        ACTIVE.clear();
+    }
+
+    // ------------------------------------------------------------------ model
+
+    private static final class Part {
+        BlockDisplay d;
+        Vector3f center;
+        Quaternionf rot;
+        Vector3f scale;
+        boolean upper;
+        boolean tip;
+        BlockData data;
+    }
+
+    private static List<Part> buildModel() {
+        List<Part> out = new ArrayList<>();
+        float step = (float) Math.toRadians(22);
+        for (int i = -4; i <= 4; i++) tooth(out, true, i * step, Math.abs(i) == 1);          // upper: fangs at +-22 deg
+        for (int i = -4; i < 4; i++) tooth(out, false, (i + 0.5f) * step, i == -1 || i == 0); // lower: canines at +-11 deg
+        gum(out, true, -4 * step, 4 * step, 8);
+        gum(out, false, -3.5f * step, 3.5f * step, 7);
+        return out;
+    }
+
+    /** One tooth: a stack of shrinking cubes, so it tapers to a point. */
+    private static void tooth(List<Part> out, boolean upper, float phi, boolean big) {
+        float[] hs = big ? (upper ? new float[]{0.14f, 0.12f, 0.10f} : new float[]{0.09f, 0.08f, 0.07f})
+                : new float[]{0.07f, 0.06f};
+        float[] ws = big ? new float[]{0.10f, 0.07f, 0.04f} : new float[]{0.08f, 0.045f};
+        float sign = upper ? -1f : 1f; // upper teeth hang down, lower teeth point up
+        float y = 0;
+        for (int k = 0; k < hs.length; k++) {
+            Part p = new Part();
+            p.upper = upper;
+            p.center = new Vector3f((float) (R * Math.sin(phi)), sign * (y + hs[k] / 2f), (float) (R * Math.cos(phi)));
+            p.rot = new Quaternionf().rotateY(phi);
+            p.scale = new Vector3f(ws[k], hs[k], ws[k]);
+            p.tip = big && k == hs.length - 1;
+            p.data = Material.CALCITE.createBlockData();
+            out.add(p);
+            y += hs[k];
+        }
+    }
+
+    /** The red gum line the teeth sit in. */
+    private static void gum(List<Part> out, boolean upper, float from, float to, int n) {
+        for (int s = 0; s < n; s++) {
+            float a = from + (to - from) * s / n;
+            float b = from + (to - from) * (s + 1) / n;
+            float m = (a + b) / 2f;
+            Part p = new Part();
+            p.upper = upper;
+            p.center = new Vector3f((float) (R * Math.sin(m)), upper ? 0.055f : -0.055f, (float) (R * Math.cos(m)));
+            p.rot = new Quaternionf().rotateY(m);
+            p.scale = new Vector3f((float) (2 * R * Math.sin((b - a) / 2f) * 1.1), 0.11f, 0.14f);
+            p.data = Material.NETHER_WART_BLOCK.createBlockData();
+            out.add(p);
+        }
+    }
+
+    /** The transformation of a part with the mouth open by {@code open} radians. */
+    private static Transformation pose(Part p, float open, float slide, float shrink) {
+        Quaternionf qx = new Quaternionf().rotateX(p.upper ? -open : open); // upper jaw swings up, lower swings down
+        Vector3f c = new Vector3f(p.center).sub(PIVOT);
+        qx.transform(c);
+        c.add(PIVOT).add(0, 0, slide);
+        Quaternionf rot = new Quaternionf(qx).mul(p.rot);
+        Vector3f sc = new Vector3f(p.scale).mul(Math.max(shrink, 0.001f));
+        return boxAt(c, rot, sc);
+    }
+
+    /** A block display is anchored at its corner; this puts its centre at {@code center}. */
+    private static Transformation boxAt(Vector3f center, Quaternionf rot, Vector3f scale) {
+        Vector3f half = new Vector3f(scale).mul(0.5f);
+        rot.transform(half);
+        return new Transformation(new Vector3f(center).sub(half), new Quaternionf(rot), new Vector3f(scale), new Quaternionf());
+    }
+
+    private static BlockDisplay spawn(World w, Location at, BlockData data, Transformation tf) {
+        BlockDisplay d = w.spawn(at, BlockDisplay.class, bd -> {
+            bd.setBlock(data);
+            bd.setTransformation(tf);
+            bd.setBrightness(new Display.Brightness(15, 15));
+            bd.setInterpolationDuration(0);
+            bd.setTeleportDuration(1);
+            bd.setViewRange(1.5f);
+            bd.setShadowRadius(0f);
+            bd.setPersistent(false);
+        });
+        ACTIVE.add(d);
+        return d;
+    }
+
+    private static void animate(BlockDisplay d, Transformation tf, int ticks) {
+        d.setInterpolationDelay(0);
+        d.setInterpolationDuration(ticks);
+        d.setTransformation(tf);
+    }
+
+    // ----------------------------------------------------------------- effect
+
     public static void play(Plugin plugin, Player attacker, LivingEntity target) {
         World w = target.getWorld();
-        w.playSound(target.getLocation(), Sound.ENTITY_BAT_TAKEOFF, 1.0f, 0.6f);
-        w.playSound(target.getLocation(), Sound.ENTITY_PHANTOM_BITE, 1.0f, 0.7f);
+        List<Part> parts = buildModel();
+        List<BlockDisplay> drops = new ArrayList<>();
+        float[][] dropAt = {{-0.13f, 0.02f, 0.30f}, {0.13f, 0.02f, 0.30f}, {-0.05f, -0.02f, 0.34f}, {0.05f, -0.02f, 0.34f}};
+
+        Location start = anchor(target, attacker.getLocation(), target.getLocation());
+        for (Part p : parts) p.d = spawn(w, start, p.data, pose(p, OPEN, SLIDE, 0.25f));
 
         new BukkitRunnable() {
             int t = 0;
-            Location lastBase = target.getLocation().clone();
+            Location lastTarget = target.getLocation().clone();
             Location lastAtk = attacker.getLocation().clone();
 
             @Override
             public void run() {
-                if (t > END) {
-                    cancel();
-                    return;
-                }
-                if (target.isValid()) lastBase = target.getLocation().clone();
+                if (target.isValid()) lastTarget = target.getLocation().clone();
                 if (attacker.isOnline() && attacker.isValid()) lastAtk = attacker.getLocation().clone();
-                World world = lastBase.getWorld();
-                if (world == null) {
+                Location a = anchor(target, lastAtk, lastTarget);
+
+                if (t >= END || a.getWorld() == null) {
+                    finish(parts, drops);
                     cancel();
                     return;
                 }
+                for (Part p : parts) if (p.d.isValid()) p.d.teleport(a);
+                for (BlockDisplay d : drops) if (d.isValid()) d.teleport(a);
 
-                // horizontal direction target -> attacker, and "right" across it
-                Vector toward = new Vector(lastAtk.getX() - lastBase.getX(), 0, lastAtk.getZ() - lastBase.getZ());
-                if (toward.lengthSquared() < 1.0E-4) toward = new Vector(0, 0, 1);
-                toward.normalize();
-                Vector right = new Vector(-toward.getZ(), 0, toward.getX());
-                Vector up = new Vector(0, 1, 0);
-
-                double eye = target.getEyeHeight();
-                Location neck = lastBase.clone().add(0, Math.max(0.5, eye - 0.3), 0);
-                Location mouth = neck.clone().add(toward.clone().multiply(0.3));
-
-                if (t < SNAP) jaws(world, mouth, right, up, t);
-                if (t == SNAP) impact(world, neck, mouth, right, toward, up);
-                if (t >= SNAP) {
-                    double p = (t - SNAP) / (double) (END - SNAP); // 0..1
-                    ring(world, neck, (t - SNAP) * 0.13);
-                    helix(world, lastBase, t, p);
-                    stream(world, neck, lastAtk.clone().add(0, 1.1, 0), p);
+                if (t == 0) {
+                    w.playSound(a, Sound.ENTITY_BAT_TAKEOFF, 1.0f, 0.6f);
                 }
-                if (t == 9 || t == 13) {
-                    world.playSound(neck, Sound.ENTITY_GENERIC_DRINK, 0.8f, 0.55f);
+                if (t == 1) { // the jaws lunge in and slam shut
+                    w.playSound(a, Sound.ENTITY_PHANTOM_BITE, 1.0f, 0.7f);
+                    for (Part p : parts) animate(p.d, pose(p, 0f, 0f, 1f), SNAP - 1);
                 }
-                if (t == END) {
-                    world.spawnParticle(Particle.HEART, lastAtk.clone().add(0, 2.1, 0), 4, 0.35, 0.15, 0.35, 0);
-                    world.playSound(lastAtk, Sound.ENTITY_WARDEN_HEARTBEAT, 0.9f, 1.0f);
-                    world.playSound(lastAtk, Sound.ENTITY_PLAYER_BURP, 0.5f, 0.6f);
+                if (t == SNAP) { // bite lands
+                    w.playSound(a, Sound.ENTITY_PLAYER_ATTACK_CRIT, 1.0f, 0.6f);
+                    w.playSound(a, Sound.BLOCK_BONE_BLOCK_BREAK, 1.0f, 0.6f);
+                    w.playSound(a, Sound.ENTITY_GENERIC_EAT, 1.0f, 0.5f);
+                    w.playSound(a, Sound.ENTITY_BAT_HURT, 0.8f, 0.5f);
+                    for (Part p : parts) if (p.tip) p.d.setBlock(Material.REDSTONE_BLOCK.createBlockData()); // bloody fangs
+                    for (float[] pos : dropAt) {
+                        Vector3f c = new Vector3f(pos[0], pos[1], pos[2]);
+                        drops.add(spawn(w, a, Material.REDSTONE_BLOCK.createBlockData(),
+                                boxAt(c, new Quaternionf(), new Vector3f(0.07f))));
+                    }
                 }
+                if (t == SNAP + 1) { // blood runs down
+                    for (int i = 0; i < drops.size(); i++) {
+                        float[] pos = dropAt[i];
+                        Vector3f c = new Vector3f(pos[0], pos[1] - 1.1f - 0.1f * i, pos[2]);
+                        animate(drops.get(i), boxAt(c, new Quaternionf(), new Vector3f(0.04f)), 10 + 2 * i);
+                    }
+                }
+                if (t >= SNAP + 1 && t < 15 && (t % 2) == 1) { // the jaws clench and shake
+                    float jolt = ((t / 2) % 2 == 0) ? 0.03f : -0.03f;
+                    for (Part p : parts) animate(p.d, pose(p, -0.06f, jolt, 1f), 2);
+                }
+                if (t == 9 || t == 13) w.playSound(a, Sound.ENTITY_GENERIC_DRINK, 0.8f, 0.55f);
+                if (t == 15) { // let go: the mouth opens and the model shrinks away
+                    w.playSound(a, Sound.ENTITY_BAT_TAKEOFF, 0.8f, 0.8f);
+                    for (Part p : parts) animate(p.d, pose(p, OPEN * 0.8f, 0.4f, 0f), END - 16);
+                }
+                if (t == 17) w.playSound(lastAtk, Sound.ENTITY_WARDEN_HEARTBEAT, 0.9f, 1.0f);
                 t++;
             }
         }.runTaskTimer(plugin, 0L, 1L);
     }
 
-    /** Upper and lower teeth closing on the neck. open goes 0.55 -> 0. */
-    private static void jaws(World w, Location mouth, Vector right, Vector up, int t) {
-        double open = 0.55 * (1.0 - (t + 1) / (double) SNAP);
-        for (int i = -3; i <= 3; i++) {
-            double x = i * 0.085;
-            double curve = 0.07 * (1.0 - (x / 0.3) * (x / 0.3)); // jaw is slightly arched
-            for (int sign = -1; sign <= 1; sign += 2) {
-                Location tooth = mouth.clone().add(right.clone().multiply(x)).add(up.clone().multiply(sign * (open + curve)));
-                w.spawnParticle(Particle.DUST, tooth, 1, 0, 0, 0, 0, BONE);
-                // dark gum line just behind the teeth
-                Location gum = tooth.clone().add(up.clone().multiply(sign * 0.07));
-                w.spawnParticle(Particle.DUST, gum, 1, 0, 0, 0, 0, GUM);
+    private static void finish(List<Part> parts, List<BlockDisplay> drops) {
+        for (Part p : parts) {
+            if (p.d != null) {
+                ACTIVE.remove(p.d);
+                p.d.remove();
             }
         }
-        // the two long upper fangs
-        for (int side = -1; side <= 1; side += 2) {
-            Location root = mouth.clone().add(right.clone().multiply(side * 0.1)).add(up.clone().multiply(open + 0.07));
-            for (int k = 1; k <= 4; k++) {
-                Location tip = root.clone().subtract(up.clone().multiply(k * 0.045));
-                w.spawnParticle(Particle.DUST, tip, 1, 0, 0, 0, 0, k == 4 ? GUM : BONE);
-            }
+        for (BlockDisplay d : drops) {
+            ACTIVE.remove(d);
+            d.remove();
         }
     }
 
-    /** The bite lands: blood from the two puncture marks. */
-    private static void impact(World w, Location neck, Location mouth, Vector right, Vector toward, Vector up) {
-        w.playSound(neck, Sound.ENTITY_PLAYER_ATTACK_CRIT, 1.0f, 0.6f);
-        w.playSound(neck, Sound.ENTITY_GENERIC_EAT, 1.0f, 0.5f);
-        w.playSound(neck, Sound.ENTITY_BAT_HURT, 0.8f, 0.5f);
-        w.spawnParticle(Particle.BLOCK, neck, 28, 0.18, 0.12, 0.18, 0.15, Material.REDSTONE_BLOCK.createBlockData());
-        w.spawnParticle(Particle.DAMAGE_INDICATOR, neck, 6, 0.2, 0.15, 0.2, 0.05);
-        for (int side = -1; side <= 1; side += 2) {
-            Location mark = neck.clone().add(toward.clone().multiply(0.12)).add(right.clone().multiply(side * 0.1));
-            w.spawnParticle(Particle.DUST, mark, 8, 0.03, 0.03, 0.03, 0, BLOOD);
-            // spray outward and downward
-            for (int k = 0; k < 5; k++) {
-                Location drop = mark.clone().add(toward.clone().multiply(k * 0.07)).subtract(up.clone().multiply(k * 0.05 * k * 0.4));
-                w.spawnParticle(Particle.DUST, drop, 1, 0.02, 0.02, 0.02, 0, BLOOD);
-            }
+    /** At the victim's neck, facing the attacker (the model's front, +z, points at the attacker). */
+    private static Location anchor(LivingEntity target, Location attacker, Location targetLoc) {
+        double dx = attacker.getX() - targetLoc.getX();
+        double dz = attacker.getZ() - targetLoc.getZ();
+        if (dx * dx + dz * dz < 1.0E-4) {
+            dx = 0;
+            dz = 1;
         }
-    }
-
-    /** Expanding horizontal shockwave, bright red fading to near-black. */
-    private static void ring(World w, Location center, double radius) {
-        int points = 18;
-        for (int i = 0; i < points; i++) {
-            double a = 2 * Math.PI * i / points;
-            Location l = center.clone().add(Math.cos(a) * radius, 0, Math.sin(a) * radius);
-            w.spawnParticle(Particle.DUST_COLOR_TRANSITION, l, 1, 0, 0, 0, 0, RING);
-        }
-    }
-
-    /** Two strands of blood spiralling up around the victim. */
-    private static void helix(World w, Location base, int t, double p) {
-        double h = p * 2.0;
-        double radius = 0.7 - 0.25 * p;
-        for (int strand = 0; strand < 2; strand++) {
-            double a = t * 0.65 + strand * Math.PI;
-            Location l = base.clone().add(Math.cos(a) * radius, h, Math.sin(a) * radius);
-            w.spawnParticle(Particle.DUST, l, 1, 0.02, 0.02, 0.02, 0, BLOOD);
-            w.spawnParticle(Particle.CRIMSON_SPORE, l, 1, 0.05, 0.05, 0.05, 0);
-        }
-    }
-
-    /** Blood pulled from the neck into the attacker. */
-    private static void stream(World w, Location from, Location to, double p) {
-        Vector line = to.toVector().subtract(from.toVector());
-        for (int k = 0; k < 4; k++) {
-            double f = p - k * 0.1;
-            if (f < 0 || f > 1) continue;
-            double wobble = Math.sin(f * 12 + k) * 0.12 * (1 - f);
-            Location l = from.clone().add(line.clone().multiply(f)).add(wobble, Math.cos(f * 9 + k) * 0.1, -wobble);
-            w.spawnParticle(Particle.DUST_COLOR_TRANSITION, l, 2, 0.03, 0.03, 0.03, 0, STREAM);
-        }
+        Location l = targetLoc.clone().add(0, Math.max(0.5, target.getEyeHeight() - 0.25), 0);
+        l.setYaw((float) Math.toDegrees(Math.atan2(-dx, dz)));
+        l.setPitch(0f);
+        return l;
     }
 }
