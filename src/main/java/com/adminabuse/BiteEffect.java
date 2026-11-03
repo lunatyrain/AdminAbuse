@@ -201,7 +201,6 @@ public final class BiteEffect {
                     float jolt = ((t / 2) % 2 == 0) ? 0.03f : -0.03f;
                     for (Part p : parts) animate(p.d, pose(p, 0f, jolt, 1f), 2);
                 }
-                if (t == 9) w.playSound(a, Sound.ENTITY_GENERIC_DRINK, 0.7f, 0.55f);
                 if (t == 15) { // let go: the mouth opens and the model shrinks away
                     for (Part p : parts) animate(p.d, pose(p, OPEN * 0.8f, 0.4f, 0f), END - 16);
                 }
@@ -223,7 +222,7 @@ public final class BiteEffect {
         }
     }
 
-    /** At the victim's neck, facing the attacker (the model's front, +z, points at the attacker). */
+    /** At the victim's neck, facing the victim (the model's front, +z, points away from the attacker, at the bitten player). */
     private static Location anchor(LivingEntity target, Location attacker, Location targetLoc) {
         double dx = attacker.getX() - targetLoc.getX();
         double dz = attacker.getZ() - targetLoc.getZ();
@@ -232,7 +231,7 @@ public final class BiteEffect {
             dz = 1;
         }
         Location l = targetLoc.clone().add(0, Math.max(0.5, target.getEyeHeight() - 0.25), 0);
-        l.setYaw((float) Math.toDegrees(Math.atan2(-dx, dz)));
+        l.setYaw((float) Math.toDegrees(Math.atan2(-dx, dz)) + 180f); // +180: the bite faces the victim, not the attacker
         l.setPitch(0f);
         return l;
     }
