@@ -30,6 +30,11 @@ public final class BiteCommand implements CommandExecutor, TabCompleter {
             p.sendMessage(Component.text("You don't have permission.", NamedTextColor.RED));
             return true;
         }
+        if (args.length >= 1 && args[0].equalsIgnoreCase("debug")) {
+            plugin.setDebug(!plugin.debug());
+            p.sendMessage(Component.text("Bite debug: " + (plugin.debug() ? "ON" : "OFF"), NamedTextColor.GRAY));
+            return true;
+        }
         int amount = plugin.getConfig().getInt("default-amount", 1);
         if (args.length >= 1) {
             try {
@@ -50,6 +55,6 @@ public final class BiteCommand implements CommandExecutor, TabCompleter {
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command cmd, String alias, String[] args) {
-        return args.length == 1 ? List.of("1", "16", "64", "99") : List.of();
+        return args.length == 1 ? List.of("1", "16", "64", "99", "debug") : List.of();
     }
 }

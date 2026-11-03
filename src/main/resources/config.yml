@@ -8,3 +8,10 @@ default-amount: 1
 
 # Knockback of a bite (a normal hit is about 0.4).
 knockback: 0.45
+
+# true = the bite works even where another plugin blocks the attack (spawn protection, PvP-off regions, combat plugins).
+ignore-protection: true
+
+# true = the person swinging gets grey chat lines saying what the bite did (or why it did nothing).
+# Toggle in-game with /lunabite debug
+debug: false
