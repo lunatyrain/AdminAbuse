@@ -1,0 +1,10 @@
+# AdminAbuse - Luna's Vampire Bite
+
+# Red chat message the bitten player sees.
+message: "You have been bitten by Luna"
+
+# How many /lunabite gives when you do not type an amount (1-99).
+default-amount: 1
+
+# Knockback of a bite (a normal hit is about 0.4).
+knockback: 0.45

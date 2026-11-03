@@ -1,0 +1,17 @@
+name: AdminAbuse
+version: '1.0.0'
+main: com.adminabuse.AdminAbusePlugin
+api-version: '1.21'
+description: Admin abuse toolkit. Includes Luna's Vampire Bite - hits for 0 damage, plays a vampire bite effect, single use, stacks to 99.
+commands:
+  lunabite:
+    description: Give yourself Luna's Vampire Bite
+    usage: /lunabite [amount 1-99]
+    aliases: [vampirebite, lbite]
+permissions:
+  adminabuse.give:
+    description: Use /lunabite
+    default: op
+  adminabuse.use:
+    description: Use the bite sword on others
+    default: op
