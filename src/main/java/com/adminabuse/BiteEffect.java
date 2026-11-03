@@ -31,6 +31,7 @@ public final class BiteEffect {
     private static final float OPEN = (float) Math.toRadians(38);  // how wide the mouth starts
     private static final float SLIDE = 0.45f;                      // how far in front the jaws start
     private static final Vector3f PIVOT = new Vector3f(0, 0, -0.30f); // the jaw hinge
+    private static final float GAP = 0.2f;                         // each jaw stays this far from the middle, so the teeth never reach the other jaw's gums
     private static final int SNAP = 4;   // tick the jaws are shut
     private static final int END = 21;   // tick everything is removed
 
@@ -108,10 +109,14 @@ public final class BiteEffect {
         Quaternionf qx = new Quaternionf().rotateX(p.upper ? -open : open); // upper jaw swings up, lower swings down
         Vector3f c = new Vector3f(p.center).sub(PIVOT);
         qx.transform(c);
-        c.add(PIVOT).add(0, 0, slide);
+        c.add(PIVOT).add(0, upperSign(p) * GAP, slide);
         Quaternionf rot = new Quaternionf(qx).mul(p.rot);
         Vector3f sc = new Vector3f(p.scale).mul(Math.max(shrink, 0.001f));
         return boxAt(c, rot, sc);
+    }
+
+    private static float upperSign(Part p) {
+        return p.upper ? 1f : -1f;
     }
 
     /** A block display is anchored at its corner; this puts its centre at {@code center}. */
@@ -172,18 +177,12 @@ public final class BiteEffect {
                 for (Part p : parts) if (p.d.isValid()) p.d.teleport(a);
                 for (BlockDisplay d : drops) if (d.isValid()) d.teleport(a);
 
-                if (t == 0) {
-                    w.playSound(a, Sound.ENTITY_BAT_TAKEOFF, 1.0f, 0.6f);
-                }
                 if (t == 1) { // the jaws lunge in and slam shut
                     w.playSound(a, Sound.ENTITY_PHANTOM_BITE, 1.0f, 0.7f);
                     for (Part p : parts) animate(p.d, pose(p, 0f, 0f, 1f), SNAP - 1);
                 }
                 if (t == SNAP) { // bite lands
-                    w.playSound(a, Sound.ENTITY_PLAYER_ATTACK_CRIT, 1.0f, 0.6f);
                     w.playSound(a, Sound.BLOCK_BONE_BLOCK_BREAK, 1.0f, 0.6f);
-                    w.playSound(a, Sound.ENTITY_GENERIC_EAT, 1.0f, 0.5f);
-                    w.playSound(a, Sound.ENTITY_BAT_HURT, 0.8f, 0.5f);
                     for (Part p : parts) if (p.tip) p.d.setBlock(Material.REDSTONE_BLOCK.createBlockData()); // bloody fangs
                     for (float[] pos : dropAt) {
                         Vector3f c = new Vector3f(pos[0], pos[1], pos[2]);
@@ -200,14 +199,12 @@ public final class BiteEffect {
                 }
                 if (t >= SNAP + 1 && t < 15 && (t % 2) == 1) { // the jaws clench and shake
                     float jolt = ((t / 2) % 2 == 0) ? 0.03f : -0.03f;
-                    for (Part p : parts) animate(p.d, pose(p, -0.06f, jolt, 1f), 2);
+                    for (Part p : parts) animate(p.d, pose(p, 0f, jolt, 1f), 2);
                 }
-                if (t == 9 || t == 13) w.playSound(a, Sound.ENTITY_GENERIC_DRINK, 0.8f, 0.55f);
+                if (t == 9) w.playSound(a, Sound.ENTITY_GENERIC_DRINK, 0.7f, 0.55f);
                 if (t == 15) { // let go: the mouth opens and the model shrinks away
-                    w.playSound(a, Sound.ENTITY_BAT_TAKEOFF, 0.8f, 0.8f);
                     for (Part p : parts) animate(p.d, pose(p, OPEN * 0.8f, 0.4f, 0f), END - 16);
                 }
-                if (t == 17) w.playSound(lastAtk, Sound.ENTITY_WARDEN_HEARTBEAT, 0.9f, 1.0f);
                 t++;
             }
         }.runTaskTimer(plugin, 0L, 1L);
